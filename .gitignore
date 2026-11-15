@@ -1,0 +1,17 @@
+# Environment and secrets
+**/.env
+**/.env.*
+!**/.env.example
+
+# Dependencies and Python runtime artifacts
+**/node_modules/
+**/.venv/
+**/__pycache__/
+*.py[cod]
+
+# Frontend build output
+**/dist/
+
+# Local and OS files
+.DS_Store
+*.log

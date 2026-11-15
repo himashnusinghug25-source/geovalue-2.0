@@ -1,0 +1,23 @@
+{
+  "name": "geovalue-node-api",
+  "version": "1.0.0",
+  "description": "GeoValue 2.0 API Gateway and Property Valuation Service",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "keywords": [
+    "geovalue",
+    "postgis",
+    "spatial",
+    "valuation"
+  ],
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "pg": "^8.13.0"
+  }
+}
