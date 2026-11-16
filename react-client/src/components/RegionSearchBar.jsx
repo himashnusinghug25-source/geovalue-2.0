@@ -34,6 +34,7 @@ export default function RegionSearchBar({
   parcelCount,
   loadingParcels,
   bboxError,
+  dockCollapsed,
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
@@ -42,6 +43,7 @@ export default function RegionSearchBar({
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
   const containerRef = useRef(null);
+  const inputRef = useRef(null);
   const debounceRef = useRef(null);
 
   useEffect(() => {
@@ -50,8 +52,18 @@ export default function RegionSearchBar({
         setDropdownOpen(false);
       }
     };
+    const handleShortcut = (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        inputRef.current?.focus();
+      }
+    };
     document.addEventListener("mousedown", handleOutsideClick);
-    return () => document.removeEventListener("mousedown", handleOutsideClick);
+    document.addEventListener("keydown", handleShortcut);
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideClick);
+      document.removeEventListener("keydown", handleShortcut);
+    };
   }, []);
 
   const runGeocodeSearch = async (text) => {
@@ -144,7 +156,7 @@ export default function RegionSearchBar({
     }
     debounceRef.current = setTimeout(() => {
       runGeocodeSearch(nextValue);
-    }, 300);
+    }, 280);
   };
 
   const handleChooseRegion = (region) => {
@@ -161,12 +173,23 @@ export default function RegionSearchBar({
   };
 
   return (
-    <div className="region-search-wrapper" ref={containerRef}>
-      <form className="region-search-bar" onSubmit={handleFormSubmit}>
+    <div
+      className={`region-search-wrapper ${dockCollapsed ? "dock-is-collapsed" : ""}`}
+      ref={containerRef}
+    >
+      <form className="region-search-bar glass-surface" onSubmit={handleFormSubmit}>
+        <span className="search-icon" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="7" />
+            <path d="M21 21l-4.35-4.35" strokeLinecap="round" />
+          </svg>
+        </span>
+
         <input
+          ref={inputRef}
           type="text"
           className="region-search-input"
-          placeholder="Search city or region (Delhi, Gurgaon, Noida...)"
+          placeholder="Search city or coordinates (Delhi, Gurgaon, Noida...)"
           value={query}
           onChange={handleInputChange}
           onFocus={() => {
@@ -174,12 +197,33 @@ export default function RegionSearchBar({
           }}
           aria-label="Search region"
         />
+
+        {query && (
+          <button
+            type="button"
+            className="search-clear-btn"
+            onClick={() => {
+              setQuery("");
+              setResults([]);
+              setDropdownOpen(false);
+              setSearchError(null);
+            }}
+            aria-label="Clear search"
+          >
+            ✕
+          </button>
+        )}
+
+        <kbd className="shortcut-kbd" title="Focus search (Cmd+K / Ctrl+K)">
+          ⌘K
+        </kbd>
+
         <button
           type="submit"
           className="region-search-btn"
           disabled={searching}
         >
-          {searching ? "..." : "Go"}
+          {searching ? "..." : "Fly"}
         </button>
       </form>
 
@@ -191,16 +235,18 @@ export default function RegionSearchBar({
             className="preset-pill"
             onClick={() => handleChooseRegion(city)}
           >
+            <span className="preset-dot" />
             {city.shortName}
           </button>
         ))}
 
-        <span className="bbox-status-pill">
+        <span className={`bbox-status-pill ${loadingParcels ? "is-loading" : ""}`}>
+          <span className="telemetry-dot" />
           {loadingParcels
-            ? "Loading parcels..."
+            ? "Scanning PostGIS bbox..."
             : parcelCount !== null
-            ? `${parcelCount} parcels in view`
-            : "Vector tiles live"}
+            ? `${parcelCount} parcels loaded`
+            : "PostGIS MVT live"}
         </span>
       </div>
 
@@ -211,7 +257,7 @@ export default function RegionSearchBar({
       )}
 
       {dropdownOpen && results.length > 0 && (
-        <ul className="region-dropdown" role="listbox">
+        <ul className="region-dropdown glass-surface" role="listbox">
           {results.map((item) => (
             <li key={item.id}>
               <button
@@ -219,8 +265,16 @@ export default function RegionSearchBar({
                 className="region-dropdown-item"
                 onClick={() => handleChooseRegion(item)}
               >
-                <span className="region-item-title">{item.shortName}</span>
-                <span className="region-item-sub">{item.name}</span>
+                <span className="pin-icon" aria-hidden="true">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M12 21s-6-5.686-6-10a6 6 0 1112 0c0 4.314-6 10-6 10z" />
+                    <circle cx="12" cy="11" r="2" />
+                  </svg>
+                </span>
+                <span className="region-item-text">
+                  <span className="region-item-title">{item.shortName}</span>
+                  <span className="region-item-sub">{item.name}</span>
+                </span>
               </button>
             </li>
           ))}

@@ -66,10 +66,10 @@ export default function AuthModal({ isOpen, onClose, onAuthenticated }) {
 
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true">
-      <div className="auth-modal">
+      <div className="auth-modal glass-surface">
         <div className="auth-modal-header">
           <div>
-            <span className="brand-pill">Portfolio Access</span>
+            <span className="brand-pill">Portfolio Vault</span>
             <h2>{mode === "login" ? "Sign In to GeoValue" : "Create Account"}</h2>
           </div>
           <button
@@ -166,7 +166,13 @@ export default function AuthModal({ isOpen, onClose, onAuthenticated }) {
           onClick={handleGoogleLogin}
           disabled={submitting}
         >
-          Continue with Google
+          <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              fill="#EA4335"
+              d="M12 10.2v3.9h5.4c-.2 1.2-1.4 3.6-5.4 3.6-3.2 0-5.9-2.7-5.9-6s2.7-6 5.9-6c1.9 0 3.1.8 3.8 1.5l2.6-2.5C16.8 3.2 14.6 2.2 12 2.2 6.6 2.2 2.2 6.6 2.2 12s4.4 9.8 9.8 9.8c5.6 0 9.4-4 9.4-9.5 0-.6-.1-1.1-.2-1.6H12z"
+            />
+          </svg>
+          <span>Continue with Google</span>
         </button>
       </div>
     </div>

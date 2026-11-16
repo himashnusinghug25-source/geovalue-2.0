@@ -14,7 +14,6 @@ import {
 
 import AIChatWidget from "./components/AIChatWidget.jsx";
 import AuthModal from "./components/AuthModal.jsx";
-import Google3DMap from "./components/Google3DMap.jsx";
 import MapLayerControls from "./components/MapLayerControls.jsx";
 import PortfolioView from "./components/PortfolioView.jsx";
 import RegionSearchBar from "./components/RegionSearchBar.jsx";
@@ -30,10 +29,11 @@ import {
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN || "";
 const NODE_API_URL = import.meta.env.VITE_NODE_API_URL || "http://localhost:3000";
 const RISK_API_URL = import.meta.env.VITE_RISK_API_URL || "http://localhost:8000";
-const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "";
 
 const INITIAL_CENTER = [77.209, 28.6139];
-const INITIAL_ZOOM = 12;
+const INITIAL_ZOOM = 12.2;
+const INITIAL_PITCH = 52;
+const INITIAL_BEARING = -18;
 const HORIZON_OPTIONS = [3, 5, 10];
 const EMPTY_FC = { type: "FeatureCollection", features: [] };
 
@@ -42,13 +42,15 @@ const RISK_CHOROPLETH_COLOR = [
   ["linear"],
   ["coalesce", ["get", "risk_score"], 0],
   0,
-  "#22c55e",
-  35,
-  "#eab308",
-  65,
-  "#f97316",
+  "#10b981",
+  30,
+  "#06b6d4",
+  60,
+  "#f59e0b",
+  85,
+  "#f43f5e",
   100,
-  "#ef4444",
+  "#e11d48",
 ];
 
 function getMapStyleConfig(styleMode) {
@@ -66,7 +68,7 @@ function getMapStyleConfig(styleMode) {
         id: "background",
         type: "background",
         paint: {
-          "background-color": styleMode === "satellite" ? "#0f1f1c" : "#0b1120",
+          "background-color": styleMode === "satellite" ? "#0b191b" : "#0b0f19",
         },
       },
     ],
@@ -74,10 +76,36 @@ function getMapStyleConfig(styleMode) {
 }
 
 function getRiskTier(score) {
-  if (score >= 75) return { label: "Critical", className: "badge-critical" };
-  if (score >= 50) return { label: "High", className: "badge-high" };
-  if (score >= 25) return { label: "Moderate", className: "badge-moderate" };
-  return { label: "Low", className: "badge-low" };
+  if (score >= 75) {
+    return {
+      label: "Critical",
+      className: "badge-critical",
+      color: "#f43f5e",
+      cardGlow: "risk-glow-critical",
+    };
+  }
+  if (score >= 50) {
+    return {
+      label: "High",
+      className: "badge-high",
+      color: "#f59e0b",
+      cardGlow: "risk-glow-high",
+    };
+  }
+  if (score >= 25) {
+    return {
+      label: "Moderate",
+      className: "badge-moderate",
+      color: "#06b6d4",
+      cardGlow: "risk-glow-moderate",
+    };
+  }
+  return {
+    label: "Low",
+    className: "badge-low",
+    color: "#10b981",
+    cardGlow: "risk-glow-low",
+  };
 }
 
 function formatCurrency(value) {
@@ -97,6 +125,58 @@ function formatCompactCurrency(value) {
     notation: "compact",
     maximumFractionDigits: 1,
   }).format(value);
+}
+
+/**
+ * Animated circular SVG gauge for climate risk score (0-100).
+ */
+function RiskScoreRing({ score, tier }) {
+  const clamped = Math.max(0, Math.min(100, Number(score) || 0));
+  const radius = 44;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference * (1 - clamped / 100);
+
+  return (
+    <div className="risk-ring-wrap">
+      <svg className="risk-ring-svg" viewBox="0 0 110 110" aria-label={`Risk score ${clamped} out of 100`}>
+        <defs>
+          <filter id="riskRingGlow" x="-30%" y="-30%" width="160%" height="160%">
+            <feGaussianBlur stdDeviation="3" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+        <circle
+          className="risk-ring-track"
+          cx="55"
+          cy="55"
+          r={radius}
+          strokeWidth="8"
+          fill="none"
+        />
+        <circle
+          className="risk-ring-progress"
+          cx="55"
+          cy="55"
+          r={radius}
+          strokeWidth="8"
+          fill="none"
+          stroke={tier.color}
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+          filter="url(#riskRingGlow)"
+          transform="rotate(-90 55 55)"
+        />
+      </svg>
+      <div className="risk-ring-center">
+        <strong className="risk-ring-value">{clamped}</strong>
+        <span className="risk-ring-unit">/ 100</span>
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -128,7 +208,7 @@ function buildPopupContent({ parcelId, circleRate, distanceToHazard, prediction,
   if (loading) {
     const status = document.createElement("div");
     status.className = "map-popup-status";
-    status.textContent = "Computing ML risk score & 10Y forecast...";
+    status.textContent = "Computing ML risk & 10Y ARIMA-X...";
     container.appendChild(status);
   } else if (error) {
     const errEl = document.createElement("div");
@@ -136,8 +216,8 @@ function buildPopupContent({ parcelId, circleRate, distanceToHazard, prediction,
     errEl.textContent = error;
     container.appendChild(errEl);
   } else if (prediction) {
-    addRow("Predicted Risk", `${prediction.risk_score} / 100`);
-    addRow("Adjusted Valuation", formatCurrency(prediction.risk_adjusted_valuation));
+    addRow("Risk Score", `${prediction.risk_score} / 100`);
+    addRow("Adjusted Value", formatCurrency(prediction.risk_adjusted_valuation));
   }
 
   return container;
@@ -148,8 +228,10 @@ export default function App() {
   const mapRef = useRef(null);
   const popupRef = useRef(null);
   const abortControllerRef = useRef(null);
+  const hoverRafRef = useRef(null);
 
   const showChoroplethRef = useRef(true);
+  const show3DExtrusionRef = useRef(true);
   const choroplethOpacityRef = useRef(0.55);
   const bboxGeoJsonRef = useRef(EMPTY_FC);
   const activeStyleRef = useRef("dark");
@@ -157,6 +239,7 @@ export default function App() {
   const [activeView, setActiveView] = useState(() =>
     window.location.hash === "#portfolio" ? "portfolio" : "map"
   );
+  const [dockCollapsed, setDockCollapsed] = useState(false);
 
   // Parcel & ML Valuation State
   const [selectedParcel, setSelectedParcel] = useState(null);
@@ -165,9 +248,10 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // Map Layer & Region Search State
+  // Map Layer, 3D Camera & Region Search State
   const [baseStyle, setBaseStyle] = useState("dark");
-  const [mapFocus, setMapFocus] = useState(INITIAL_CENTER);
+  const [is3DTilt, setIs3DTilt] = useState(true);
+  const [show3DExtrusion, setShow3DExtrusion] = useState(true);
   const [showChoropleth, setShowChoropleth] = useState(true);
   const [choroplethOpacity, setChoroplethOpacity] = useState(0.55);
   const [bboxParcelCount, setBboxParcelCount] = useState(null);
@@ -186,6 +270,10 @@ export default function App() {
   useEffect(() => {
     showChoroplethRef.current = showChoropleth;
   }, [showChoropleth]);
+
+  useEffect(() => {
+    show3DExtrusionRef.current = show3DExtrusion;
+  }, [show3DExtrusion]);
 
   useEffect(() => {
     choroplethOpacityRef.current = choroplethOpacity;
@@ -339,8 +427,47 @@ export default function App() {
   }, [evaluateParcel]);
 
   const ensureParcelLayers = useCallback((map) => {
-    const visibility = showChoroplethRef.current ? "visible" : "none";
+    const choroplethVis = showChoroplethRef.current ? "visible" : "none";
+    const extrusionVis = show3DExtrusionRef.current ? "visible" : "none";
     const fillOpacity = choroplethOpacityRef.current;
+
+    // Atmospheric volumetric fog on Mapbox v3 canvas
+    try {
+      map.setFog({
+        color: "rgb(11, 15, 25)",
+        "high-color": "rgb(20, 32, 58)",
+        "horizon-blend": 0.08,
+        "space-color": "rgb(6, 9, 17)",
+        "star-intensity": 0.2,
+      });
+    } catch {
+      // Fallback custom style may not support fog
+    }
+
+    // 3D volumetric urban building extrusions when Mapbox composite source is active
+    if (map.getSource("composite") && !map.getLayer("building-3d")) {
+      const labelLayerId = map
+        .getStyle()
+        ?.layers?.find((l) => l.type === "symbol" && l.layout?.["text-field"])?.id;
+
+      map.addLayer(
+        {
+          id: "building-3d",
+          source: "composite",
+          "source-layer": "building",
+          filter: ["==", "extrude", "true"],
+          type: "fill-extrusion",
+          minzoom: 13,
+          paint: {
+            "fill-extrusion-color": "#151e34",
+            "fill-extrusion-height": ["coalesce", ["get", "height"], 12],
+            "fill-extrusion-base": ["coalesce", ["get", "min_height"], 0],
+            "fill-extrusion-opacity": 0.65,
+          },
+        },
+        labelLayerId
+      );
+    }
 
     if (!map.getSource("municipal-parcels")) {
       map.addSource("municipal-parcels", {
@@ -357,10 +484,45 @@ export default function App() {
         type: "fill",
         source: "municipal-parcels",
         "source-layer": "municipal_parcels",
-        layout: { visibility },
+        layout: { visibility: choroplethVis },
         paint: {
           "fill-color": RISK_CHOROPLETH_COLOR,
           "fill-opacity": fillOpacity,
+        },
+      });
+    }
+
+    if (!map.getLayer("municipal-parcels-extrusion")) {
+      map.addLayer({
+        id: "municipal-parcels-extrusion",
+        type: "fill-extrusion",
+        source: "municipal-parcels",
+        "source-layer": "municipal_parcels",
+        layout: { visibility: extrusionVis },
+        paint: {
+          "fill-extrusion-color": RISK_CHOROPLETH_COLOR,
+          "fill-extrusion-height": [
+            "*",
+            ["coalesce", ["get", "risk_score"], 10],
+            2.8,
+          ],
+          "fill-extrusion-base": 0,
+          "fill-extrusion-opacity": 0.62,
+        },
+      });
+    }
+
+    if (!map.getLayer("municipal-parcels-glow")) {
+      map.addLayer({
+        id: "municipal-parcels-glow",
+        type: "line",
+        source: "municipal-parcels",
+        "source-layer": "municipal_parcels",
+        paint: {
+          "line-color": RISK_CHOROPLETH_COLOR,
+          "line-width": 4.5,
+          "line-blur": 3.5,
+          "line-opacity": 0.42,
         },
       });
     }
@@ -372,9 +534,9 @@ export default function App() {
         source: "municipal-parcels",
         "source-layer": "municipal_parcels",
         paint: {
-          "line-color": "#e2e8f0",
-          "line-width": 1.25,
-          "line-opacity": 0.75,
+          "line-color": "#67e8f9",
+          "line-width": 1.35,
+          "line-opacity": 0.85,
         },
       });
     }
@@ -391,10 +553,43 @@ export default function App() {
         id: "bbox-parcels-fill",
         type: "fill",
         source: "bbox-parcels",
-        layout: { visibility },
+        layout: { visibility: choroplethVis },
         paint: {
           "fill-color": RISK_CHOROPLETH_COLOR,
           "fill-opacity": Math.min(0.95, fillOpacity + 0.1),
+        },
+      });
+    }
+
+    if (!map.getLayer("bbox-parcels-extrusion")) {
+      map.addLayer({
+        id: "bbox-parcels-extrusion",
+        type: "fill-extrusion",
+        source: "bbox-parcels",
+        layout: { visibility: extrusionVis },
+        paint: {
+          "fill-extrusion-color": RISK_CHOROPLETH_COLOR,
+          "fill-extrusion-height": [
+            "*",
+            ["coalesce", ["get", "risk_score"], 10],
+            3.2,
+          ],
+          "fill-extrusion-base": 0,
+          "fill-extrusion-opacity": 0.72,
+        },
+      });
+    }
+
+    if (!map.getLayer("bbox-parcels-glow")) {
+      map.addLayer({
+        id: "bbox-parcels-glow",
+        type: "line",
+        source: "bbox-parcels",
+        paint: {
+          "line-color": "#22d3ee",
+          "line-width": 5,
+          "line-blur": 4,
+          "line-opacity": 0.45,
         },
       });
     }
@@ -406,16 +601,15 @@ export default function App() {
         source: "bbox-parcels",
         paint: {
           "line-color": "#38bdf8",
-          "line-width": 1.75,
-          "line-opacity": 0.9,
+          "line-width": 1.65,
+          "line-opacity": 0.95,
         },
       });
     }
   }, []);
 
-  // Initialize Mapbox GL JS map once
+  // Initialize 3D Mapbox GL JS map once
   useEffect(() => {
-    if (GOOGLE_MAPS_API_KEY) return;
     if (!mapContainerRef.current || mapRef.current) return;
 
     mapboxgl.accessToken = MAPBOX_TOKEN;
@@ -425,9 +619,15 @@ export default function App() {
       style: getMapStyleConfig("dark"),
       center: INITIAL_CENTER,
       zoom: INITIAL_ZOOM,
+      pitch: INITIAL_PITCH,
+      bearing: INITIAL_BEARING,
+      antialias: true,
     });
 
-    map.addControl(new mapboxgl.NavigationControl(), "top-right");
+    map.addControl(
+      new mapboxgl.NavigationControl({ visualizePitch: true }),
+      "top-right"
+    );
     mapRef.current = map;
 
     map.on("style.load", () => {
@@ -435,15 +635,22 @@ export default function App() {
     });
 
     const getInteractiveLayers = () =>
-      ["bbox-parcels-fill", "municipal-parcels-fill"].filter((id) =>
-        Boolean(map.getLayer(id))
-      );
+      [
+        "bbox-parcels-extrusion",
+        "bbox-parcels-fill",
+        "municipal-parcels-extrusion",
+        "municipal-parcels-fill",
+      ].filter((id) => Boolean(map.getLayer(id)));
 
     map.on("mousemove", (e) => {
-      const layers = getInteractiveLayers();
-      if (layers.length === 0) return;
-      const hits = map.queryRenderedFeatures(e.point, { layers });
-      map.getCanvas().style.cursor = hits.length > 0 ? "pointer" : "";
+      if (hoverRafRef.current) return;
+      hoverRafRef.current = window.requestAnimationFrame(() => {
+        hoverRafRef.current = null;
+        const layers = getInteractiveLayers();
+        if (layers.length === 0) return;
+        const hits = map.queryRenderedFeatures(e.point, { layers });
+        map.getCanvas().style.cursor = hits.length > 0 ? "pointer" : "";
+      });
     });
 
     map.on("click", (e) => {
@@ -476,6 +683,9 @@ export default function App() {
     });
 
     return () => {
+      if (hoverRafRef.current) {
+        window.cancelAnimationFrame(hoverRafRef.current);
+      }
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
@@ -487,7 +697,7 @@ export default function App() {
     };
   }, [ensureParcelLayers]);
 
-  // Apply base style transitions (Dark <-> Satellite) while preserving layers
+  // Apply base style transitions (Dark <-> Satellite) while preserving 3D layers
   useEffect(() => {
     const map = mapRef.current;
     if (!map || activeStyleRef.current === baseStyle) return;
@@ -495,25 +705,44 @@ export default function App() {
     map.setStyle(getMapStyleConfig(baseStyle));
   }, [baseStyle]);
 
-  // Apply choropleth visibility and opacity updates cleanly
+  // Smooth camera pitch transition for 3D Tilt toggle
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    map.easeTo({
+      pitch: is3DTilt ? INITIAL_PITCH : 0,
+      bearing: is3DTilt ? INITIAL_BEARING : 0,
+      duration: 750,
+    });
+  }, [is3DTilt]);
+
+  // Update 3D extrusion, choropleth visibility, and fill opacity live
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    const visibility = showChoropleth ? "visible" : "none";
+    const choroplethVis = showChoropleth ? "visible" : "none";
+    const extrusionVis = show3DExtrusion ? "visible" : "none";
+
     if (map.getLayer("municipal-parcels-fill")) {
-      map.setLayoutProperty("municipal-parcels-fill", "visibility", visibility);
+      map.setLayoutProperty("municipal-parcels-fill", "visibility", choroplethVis);
       map.setPaintProperty("municipal-parcels-fill", "fill-opacity", choroplethOpacity);
     }
     if (map.getLayer("bbox-parcels-fill")) {
-      map.setLayoutProperty("bbox-parcels-fill", "visibility", visibility);
+      map.setLayoutProperty("bbox-parcels-fill", "visibility", choroplethVis);
       map.setPaintProperty(
         "bbox-parcels-fill",
         "fill-opacity",
         Math.min(0.95, choroplethOpacity + 0.1)
       );
     }
-  }, [showChoropleth, choroplethOpacity]);
+    if (map.getLayer("municipal-parcels-extrusion")) {
+      map.setLayoutProperty("municipal-parcels-extrusion", "visibility", extrusionVis);
+    }
+    if (map.getLayer("bbox-parcels-extrusion")) {
+      map.setLayoutProperty("bbox-parcels-extrusion", "visibility", extrusionVis);
+    }
+  }, [showChoropleth, show3DExtrusion, choroplethOpacity]);
 
   // Resize Mapbox canvas when returning from Portfolio view
   useEffect(() => {
@@ -530,7 +759,6 @@ export default function App() {
     async (region) => {
       navigateView("map");
       setBboxError(null);
-      setMapFocus(region.center);
 
       const map = mapRef.current;
       const bbox =
@@ -550,13 +778,19 @@ export default function App() {
               [bbox[0], bbox[1]],
               [bbox[2], bbox[3]],
             ],
-            { padding: 48, maxZoom: 13.5, duration: 1200 }
+            {
+              padding: { top: 90, bottom: 60, left: 450, right: 280 },
+              maxZoom: 13.8,
+              duration: 1300,
+              pitch: is3DTilt ? INITIAL_PITCH : 0,
+            }
           );
         } else {
           map.flyTo({
             center: region.center,
             zoom: region.zoom || 12.2,
-            duration: 1200,
+            duration: 1300,
+            pitch: is3DTilt ? INITIAL_PITCH : 0,
           });
         }
       }
@@ -590,7 +824,7 @@ export default function App() {
         setLoadingParcels(false);
       }
     },
-    [navigateView]
+    [is3DTilt, navigateView]
   );
 
   // Bookmark or unbookmark the selected parcel
@@ -657,7 +891,12 @@ export default function App() {
         : INITIAL_CENTER;
 
     if (mapRef.current && item.longitude != null && item.latitude != null) {
-      mapRef.current.flyTo({ center: coords, zoom: 14, duration: 1100 });
+      mapRef.current.flyTo({
+        center: coords,
+        zoom: 14.2,
+        pitch: is3DTilt ? INITIAL_PITCH : 0,
+        duration: 1100,
+      });
     }
 
     evaluateParcel(
@@ -706,323 +945,36 @@ export default function App() {
       : null;
 
   return (
-    <div className="layout">
-      <aside className="sidebar">
-        <header className="sidebar-header">
-          <div className="header-top-row">
-            <span className="brand-pill">GeoValue 2.0</span>
-            {user ? (
-              <div className="auth-user-pill">
-                <span className="mono">{user.email}</span>
-                <button type="button" onClick={handleSignOut}>
-                  Sign Out
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                className="auth-trigger-btn"
-                onClick={() => setAuthModalOpen(true)}
-              >
-                Sign In
-              </button>
-            )}
-          </div>
-
-          <h1>Climate Risk &amp; Valuation</h1>
-          <p className="subtitle">
-            Search regions, toggle spatial risk layers, bookmark assets, and
-            query the AI Valuation Assistant.
-          </p>
-
-          <nav className="view-nav" aria-label="Primary Workspace Views">
-            <button
-              type="button"
-              className={`view-nav-btn ${activeView === "map" ? "active" : ""}`}
-              onClick={() => navigateView("map")}
-            >
-              Map Explorer
-            </button>
-            <button
-              type="button"
-              className={`view-nav-btn ${activeView === "portfolio" ? "active" : ""}`}
-              onClick={() => navigateView("portfolio")}
-            >
-              Saved Portfolio ({portfolio.length})
-            </button>
-          </nav>
-        </header>
-
-        {!MAPBOX_TOKEN && (
-          <div className="notice-banner">
-            <strong>Mapbox Token Missing:</strong> Set{" "}
-            <code>VITE_MAPBOX_ACCESS_TOKEN</code> in <code>.env</code> to load
-            Mapbox basemap &amp; satellite tiles.
-          </div>
-        )}
-
-        <section className="panel">
-          <div className="panel-title-row">
-            <h2>Selected Parcel</h2>
-            {selectedParcel && (
-              <button
-                type="button"
-                className={`bookmark-btn ${isSelectedBookmarked ? "bookmarked" : ""}`}
-                onClick={handleToggleBookmark}
-                disabled={bookmarkSaving}
-              >
-                {bookmarkSaving
-                  ? "Saving..."
-                  : isSelectedBookmarked
-                  ? "Bookmarked ✓"
-                  : "Bookmark Property"}
-              </button>
-            )}
-          </div>
-
-          {bookmarkFeedback && (
-            <div className="bookmark-feedback">{bookmarkFeedback}</div>
-          )}
-
-          {!selectedParcel ? (
-            <p className="empty-state">
-              No parcel selected. Click a polygon rendered from{" "}
-              <code>municipal_parcels</code> or search a city to inspect risk
-              metrics.
-            </p>
-          ) : (
-            <div className="metrics-grid">
-              <div className="metric-card">
-                <span className="metric-label">Parcel ID</span>
-                <strong className="metric-value mono">
-                  {selectedParcel.parcel_id}
-                </strong>
-              </div>
-              <div className="metric-card">
-                <span className="metric-label">Base Circle Rate</span>
-                <strong className="metric-value">
-                  {formatCurrency(selectedParcel.circle_rate)}
-                </strong>
-              </div>
-              <div className="metric-card">
-                <span className="metric-label">Distance to Hazard</span>
-                <strong className="metric-value">
-                  {selectedParcel.distance_to_hazard} m
-                </strong>
-              </div>
-              <div className="metric-card">
-                <span className="metric-label">Clicked Coordinates</span>
-                <strong className="metric-value mono">
-                  {selectedParcel.coordinates[1]}, {selectedParcel.coordinates[0]}
-                </strong>
-              </div>
-            </div>
-          )}
-        </section>
-
-        <section className="panel">
-          <div className="panel-title-row">
-            <h2>ML Risk Valuation</h2>
-            {riskTier && (
-              <span className={`risk-badge ${riskTier.className}`}>
-                {riskTier.label} Risk
-              </span>
-            )}
-          </div>
-
-          {loading && (
-            <div className="status-box loading-box">
-              Running FastAPI risk scoring &amp; ARIMA-X forecasting...
-            </div>
-          )}
-
-          {error && (
-            <div className="status-box error-box">
-              <strong>Prediction Error:</strong> {error}
-            </div>
-          )}
-
-          {!loading && !error && !prediction && (
-            <p className="empty-state">
-              Awaiting parcel selection for <code>POST /predict/risk</code>.
-            </p>
-          )}
-
-          {!loading && !error && prediction && (
-            <div className="prediction-results">
-              <div className="highlight-card">
-                <span className="metric-label">Predicted Risk Score</span>
-                <div className="score-row">
-                  <strong className="score-number">
-                    {prediction.risk_score}
-                  </strong>
-                  <span className="score-max">/ 100</span>
-                </div>
-                <div className="progress-track">
-                  <div
-                    className="progress-fill"
-                    style={{ width: `${Math.min(100, prediction.risk_score)}%` }}
-                  />
-                </div>
-              </div>
-
-              <div className="highlight-card valuation-card">
-                <span className="metric-label">Risk-Adjusted Valuation</span>
-                <strong className="valuation-number">
-                  {formatCurrency(prediction.risk_adjusted_valuation)}
-                </strong>
-                {discountPercent !== null && (
-                  <span className="discount-note">
-                    -{discountPercent}% climate risk adjustment from base circle
-                    rate
-                  </span>
-                )}
-              </div>
-            </div>
-          )}
-        </section>
-
-        <section className="panel scenario-panel">
-          <div className="panel-title-row">
-            <h2>Investment Scenario Tool</h2>
-            <div className="horizon-pills" role="group" aria-label="Forecast Horizon">
-              {HORIZON_OPTIONS.map((yr) => (
-                <button
-                  key={yr}
-                  type="button"
-                  className={`horizon-pill ${forecastHorizon === yr ? "active" : ""}`}
-                  onClick={() => setForecastHorizon(yr)}
-                >
-                  {yr}Y
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {!prediction || chartData.length === 0 ? (
-            <p className="empty-state">
-              Select a parcel to render the 3Y / 5Y / 10Y ARIMA-X price
-              trajectories across Baseline, Infrastructure-Accelerated, and
-              Adverse-Risk scenarios.
-            </p>
-          ) : (
-            <>
-              <div className="chart-container">
-                <ResponsiveContainer width="100%" height={230}>
-                  <LineChart
-                    data={chartData}
-                    margin={{ top: 8, right: 12, left: 4, bottom: 4 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                    <XAxis dataKey="year" stroke="#94a3b8" fontSize={11} />
-                    <YAxis
-                      stroke="#94a3b8"
-                      fontSize={11}
-                      width={64}
-                      tickFormatter={formatCompactCurrency}
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: "#0f172a",
-                        borderColor: "#334155",
-                        borderRadius: "8px",
-                        fontSize: "12px",
-                      }}
-                      formatter={(value) => formatCurrency(Number(value))}
-                    />
-                    <Legend wrapperStyle={{ fontSize: "11px" }} />
-                    <Line
-                      type="monotone"
-                      dataKey="Baseline"
-                      name="Baseline"
-                      stroke="#38bdf8"
-                      strokeWidth={2.2}
-                      dot={{ r: 2.5 }}
-                      activeDot={{ r: 5 }}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="Infra"
-                      name="Infra (+15-20%)"
-                      stroke="#22c55e"
-                      strokeWidth={2.2}
-                      dot={{ r: 2.5 }}
-                      activeDot={{ r: 5 }}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="Risk"
-                      name="Adverse Risk"
-                      stroke="#ef4444"
-                      strokeWidth={2.2}
-                      dot={{ r: 2.5 }}
-                      activeDot={{ r: 5 }}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-
-              {terminalSnapshot && (
-                <div className="scenario-summary-grid">
-                  <div className="scenario-chip chip-baseline">
-                    <span>Y{forecastHorizon} Baseline</span>
-                    <strong>{formatCompactCurrency(terminalSnapshot.Baseline)}</strong>
-                  </div>
-                  <div className="scenario-chip chip-infra">
-                    <span>Y{forecastHorizon} Infra</span>
-                    <strong>{formatCompactCurrency(terminalSnapshot.Infra)}</strong>
-                  </div>
-                  <div className="scenario-chip chip-risk">
-                    <span>Y{forecastHorizon} Risk</span>
-                    <strong>{formatCompactCurrency(terminalSnapshot.Risk)}</strong>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </section>
-
-        <footer className="legend">
-          <h3>Risk Score Choropleth</h3>
-          <div className="legend-bar" />
-          <div className="legend-labels">
-            <span>0 (Low)</span>
-            <span>50 (Moderate)</span>
-            <span>100 (Critical)</span>
-          </div>
-        </footer>
-      </aside>
-
+    <div className="app-shell">
+      {/* Full-Viewport 3D Mapbox Stage */}
       <main className={`map-stage ${activeView === "map" ? "" : "hidden-stage"}`}>
+        <div ref={mapContainerRef} className="map-container" />
+
         <RegionSearchBar
           mapboxToken={MAPBOX_TOKEN}
           onSelectRegion={handleSelectRegion}
           parcelCount={bboxParcelCount}
           loadingParcels={loadingParcels}
           bboxError={bboxError}
+          dockCollapsed={dockCollapsed}
         />
 
         <MapLayerControls
           baseStyle={baseStyle}
           onChangeBaseStyle={setBaseStyle}
+          is3DTilt={is3DTilt}
+          onToggle3DTilt={setIs3DTilt}
+          show3DExtrusion={show3DExtrusion}
+          onToggle3DExtrusion={setShow3DExtrusion}
           showChoropleth={showChoropleth}
           onToggleChoropleth={setShowChoropleth}
           choroplethOpacity={choroplethOpacity}
           onChangeOpacity={setChoroplethOpacity}
           mapboxTokenPresent={Boolean(MAPBOX_TOKEN)}
         />
-
-        {GOOGLE_MAPS_API_KEY ? (
-          <Google3DMap
-            apiKey={GOOGLE_MAPS_API_KEY}
-            center={mapFocus}
-            zoom={12}
-          />
-        ) : (
-          <div ref={mapContainerRef} className="map-container" />
-        )}
       </main>
 
+      {/* Protected Saved Portfolio View */}
       {activeView === "portfolio" && (
         <PortfolioView
           user={user}
@@ -1035,6 +987,326 @@ export default function App() {
           onBackToMap={() => navigateView("map")}
         />
       )}
+
+      {/* Left Floating Glassmorphic Intelligence Dock */}
+      <aside
+        className={`floating-dock glass-surface ${
+          dockCollapsed ? "is-collapsed" : ""
+        }`}
+      >
+        <header className="dock-header">
+          <div className="header-top-row">
+            <div className="brand-cluster">
+              <span className="brand-pill">GeoValue 2.0</span>
+              <span className="live-pulse-tag">3D Spatial</span>
+            </div>
+
+            <div className="header-actions-row">
+              {user ? (
+                <div className="auth-user-pill">
+                  <span className="mono">{user.email}</span>
+                  <button type="button" onClick={handleSignOut}>
+                    Out
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="auth-trigger-btn"
+                  onClick={() => setAuthModalOpen(true)}
+                >
+                  Sign In
+                </button>
+              )}
+
+              <button
+                type="button"
+                className="dock-collapse-btn"
+                onClick={() => setDockCollapsed((prev) => !prev)}
+                title={dockCollapsed ? "Expand panel" : "Collapse panel"}
+                aria-expanded={!dockCollapsed}
+              >
+                {dockCollapsed ? "»" : "«"}
+              </button>
+            </div>
+          </div>
+
+          {!dockCollapsed && (
+            <>
+              <h1>Climate Risk Intelligence</h1>
+              <p className="subtitle">
+                Real-time PostGIS 3D parcel risk telemetry, ML valuation, and
+                10-year ARIMA-X trajectories.
+              </p>
+            </>
+          )}
+
+          <nav className="view-nav" aria-label="Primary Workspace Views">
+            <button
+              type="button"
+              className={`view-nav-btn ${activeView === "map" ? "active" : ""}`}
+              onClick={() => navigateView("map")}
+            >
+              3D Spatial Map
+            </button>
+            <button
+              type="button"
+              className={`view-nav-btn ${activeView === "portfolio" ? "active" : ""}`}
+              onClick={() => navigateView("portfolio")}
+            >
+              Portfolio ({portfolio.length})
+            </button>
+          </nav>
+        </header>
+
+        {!dockCollapsed && (
+          <div className="dock-scroll-body">
+            {!MAPBOX_TOKEN && (
+              <div className="notice-banner">
+                <strong>Mapbox Token Missing:</strong> Set{" "}
+                <code>VITE_MAPBOX_ACCESS_TOKEN</code> in <code>.env</code> for
+                3D buildings &amp; Satellite HD imagery.
+              </div>
+            )}
+
+            <section className="glass-card">
+              <div className="panel-title-row">
+                <h2>Selected Parcel</h2>
+                {selectedParcel && (
+                  <button
+                    type="button"
+                    className={`bookmark-btn ${isSelectedBookmarked ? "bookmarked" : ""}`}
+                    onClick={handleToggleBookmark}
+                    disabled={bookmarkSaving}
+                  >
+                    {bookmarkSaving
+                      ? "Saving..."
+                      : isSelectedBookmarked
+                      ? "Bookmarked ✓"
+                      : "+ Bookmark"}
+                  </button>
+                )}
+              </div>
+
+              {bookmarkFeedback && (
+                <div className="bookmark-feedback">{bookmarkFeedback}</div>
+              )}
+
+              {!selectedParcel ? (
+                <p className="empty-state">
+                  Click any glowing 3D parcel on the map or search Delhi,
+                  Gurgaon, or Noida to run valuation analytics.
+                </p>
+              ) : (
+                <div className="metrics-grid">
+                  <div className="metric-card">
+                    <span className="metric-label">Parcel ID</span>
+                    <strong className="metric-value mono">
+                      {selectedParcel.parcel_id}
+                    </strong>
+                  </div>
+                  <div className="metric-card">
+                    <span className="metric-label">Circle Rate</span>
+                    <strong className="metric-value">
+                      {formatCurrency(selectedParcel.circle_rate)}
+                    </strong>
+                  </div>
+                  <div className="metric-card">
+                    <span className="metric-label">Hazard Buffer</span>
+                    <strong className="metric-value">
+                      {selectedParcel.distance_to_hazard} m
+                    </strong>
+                  </div>
+                  <div className="metric-card">
+                    <span className="metric-label">Coordinates</span>
+                    <strong className="metric-value mono">
+                      {selectedParcel.coordinates[1]}, {selectedParcel.coordinates[0]}
+                    </strong>
+                  </div>
+                </div>
+              )}
+            </section>
+
+            <section className={`glass-card ${riskTier ? riskTier.cardGlow : ""}`}>
+              <div className="panel-title-row">
+                <h2>ML Risk Valuation</h2>
+                {riskTier && (
+                  <span className={`risk-badge ${riskTier.className}`}>
+                    {riskTier.label} Risk
+                  </span>
+                )}
+              </div>
+
+              {loading && (
+                <div className="status-box loading-box">
+                  Running ensemble risk model &amp; ARIMA-X forecast...
+                </div>
+              )}
+
+              {error && (
+                <div className="status-box error-box">
+                  <strong>Prediction Error:</strong> {error}
+                </div>
+              )}
+
+              {!loading && !error && !prediction && (
+                <p className="empty-state">
+                  Select a parcel polygon to calculate climate risk &amp;
+                  adjusted property value.
+                </p>
+              )}
+
+              {!loading && !error && prediction && (
+                <div className="risk-hero-row">
+                  <RiskScoreRing score={prediction.risk_score} tier={riskTier} />
+
+                  <div className="valuation-summary-box">
+                    <span className="metric-label">Risk-Adjusted Value</span>
+                    <strong className="valuation-number">
+                      {formatCurrency(prediction.risk_adjusted_valuation)}
+                    </strong>
+                    {discountPercent !== null && (
+                      <span className="discount-note">
+                        -{discountPercent}% climate risk haircut
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </section>
+
+            <section className="glass-card scenario-panel">
+              <div className="panel-title-row">
+                <h2>ARIMA-X Forecast</h2>
+                <div className="horizon-pills" role="group" aria-label="Forecast Horizon">
+                  {HORIZON_OPTIONS.map((yr) => (
+                    <button
+                      key={yr}
+                      type="button"
+                      className={`horizon-pill ${forecastHorizon === yr ? "active" : ""}`}
+                      onClick={() => setForecastHorizon(yr)}
+                    >
+                      {yr}Y
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {!prediction || chartData.length === 0 ? (
+                <p className="empty-state">
+                  Select a parcel to render 3Y / 5Y / 10Y trajectories across
+                  Baseline, Infra-Accelerated, and Adverse-Risk scenarios.
+                </p>
+              ) : (
+                <>
+                  <div className="chart-container">
+                    <ResponsiveContainer width="100%" height={205}>
+                      <LineChart
+                        data={chartData}
+                        margin={{ top: 10, right: 10, left: 2, bottom: 2 }}
+                      >
+                        <defs>
+                          <linearGradient id="gradBaseline" x1="0" y1="0" x2="1" y2="0">
+                            <stop offset="0%" stopColor="#38bdf8" />
+                            <stop offset="100%" stopColor="#06b6d4" />
+                          </linearGradient>
+                          <linearGradient id="gradInfra" x1="0" y1="0" x2="1" y2="0">
+                            <stop offset="0%" stopColor="#10b981" />
+                            <stop offset="100%" stopColor="#4ade80" />
+                          </linearGradient>
+                          <linearGradient id="gradRisk" x1="0" y1="0" x2="1" y2="0">
+                            <stop offset="0%" stopColor="#f59e0b" />
+                            <stop offset="100%" stopColor="#f43f5e" />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid
+                          strokeDasharray="3 3"
+                          stroke="rgba(148, 163, 184, 0.12)"
+                        />
+                        <XAxis dataKey="year" stroke="#94a3b8" fontSize={11} />
+                        <YAxis
+                          stroke="#94a3b8"
+                          fontSize={11}
+                          width={60}
+                          tickFormatter={formatCompactCurrency}
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            backgroundColor: "rgba(11, 15, 25, 0.95)",
+                            borderColor: "rgba(56, 189, 248, 0.35)",
+                            borderRadius: "10px",
+                            fontSize: "12px",
+                            backdropFilter: "blur(12px)",
+                          }}
+                          formatter={(value) => formatCurrency(Number(value))}
+                        />
+                        <Legend wrapperStyle={{ fontSize: "11px" }} />
+                        <Line
+                          type="monotone"
+                          dataKey="Baseline"
+                          name="Baseline"
+                          stroke="url(#gradBaseline)"
+                          strokeWidth={2.5}
+                          dot={{ r: 2.5, fill: "#38bdf8" }}
+                          activeDot={{ r: 5 }}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="Infra"
+                          name="Infra (+15-20%)"
+                          stroke="url(#gradInfra)"
+                          strokeWidth={2.5}
+                          dot={{ r: 2.5, fill: "#10b981" }}
+                          activeDot={{ r: 5 }}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="Risk"
+                          name="Adverse Risk"
+                          stroke="url(#gradRisk)"
+                          strokeWidth={2.5}
+                          dot={{ r: 2.5, fill: "#f43f5e" }}
+                          activeDot={{ r: 5 }}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {terminalSnapshot && (
+                    <div className="scenario-summary-grid">
+                      <div className="scenario-chip chip-baseline">
+                        <span>Y{forecastHorizon} Base</span>
+                        <strong>{formatCompactCurrency(terminalSnapshot.Baseline)}</strong>
+                      </div>
+                      <div className="scenario-chip chip-infra">
+                        <span>Y{forecastHorizon} Infra</span>
+                        <strong>{formatCompactCurrency(terminalSnapshot.Infra)}</strong>
+                      </div>
+                      <div className="scenario-chip chip-risk">
+                        <span>Y{forecastHorizon} Risk</span>
+                        <strong>{formatCompactCurrency(terminalSnapshot.Risk)}</strong>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </section>
+
+            <footer className="legend">
+              <div className="legend-header">
+                <span>Risk Gradient</span>
+                <span className="mono">SRID 4326 → 3857</span>
+              </div>
+              <div className="legend-bar" />
+              <div className="legend-labels">
+                <span>0 Emerald</span>
+                <span>50 Amber</span>
+                <span>100 Crimson</span>
+              </div>
+            </footer>
+          </div>
+        )}
+      </aside>
 
       <AIChatWidget
         nodeApiUrl={NODE_API_URL}

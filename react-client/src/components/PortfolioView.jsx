@@ -1,8 +1,8 @@
 function getRiskTier(score) {
-  if (score >= 75) return { label: "Critical", className: "badge-critical" };
-  if (score >= 50) return { label: "High", className: "badge-high" };
-  if (score >= 25) return { label: "Moderate", className: "badge-moderate" };
-  return { label: "Low", className: "badge-low" };
+  if (score >= 75) return { label: "Critical", className: "badge-critical", cardClass: "glow-critical" };
+  if (score >= 50) return { label: "High", className: "badge-high", cardClass: "glow-high" };
+  if (score >= 25) return { label: "Moderate", className: "badge-moderate", cardClass: "glow-moderate" };
+  return { label: "Low", className: "badge-low", cardClass: "glow-low" };
 }
 
 function formatCurrency(value) {
@@ -27,8 +27,8 @@ export default function PortfolioView({
   if (!user) {
     return (
       <main className="portfolio-stage">
-        <div className="portfolio-gate-card">
-          <span className="brand-pill">Protected Route</span>
+        <div className="portfolio-gate-card glass-surface">
+          <span className="brand-pill">Protected Vault</span>
           <h2>Sign In to Access Saved Portfolios</h2>
           <p>
             Your saved properties, climate risk audits, and risk-adjusted
@@ -39,7 +39,7 @@ export default function PortfolioView({
               Sign In / Create Account
             </button>
             <button type="button" className="secondary-btn" onClick={onBackToMap}>
-              Return to Map Explorer
+              Return to 3D Map
             </button>
           </div>
         </div>
@@ -53,8 +53,7 @@ export default function PortfolioView({
   );
   const totalAdjustedValue = portfolio.reduce(
     (sum, item) =>
-      sum +
-      (Number(item.risk_adjusted_valuation ?? item.circle_rate) || 0),
+      sum + (Number(item.risk_adjusted_valuation ?? item.circle_rate) || 0),
     0
   );
   const avgRisk =
@@ -68,35 +67,35 @@ export default function PortfolioView({
   return (
     <main className="portfolio-stage">
       <div className="portfolio-container">
-        <header className="portfolio-header">
+        <header className="portfolio-header glass-surface">
           <div>
-            <span className="brand-pill">Saved Portfolios</span>
+            <span className="brand-pill">Asset Portfolio</span>
             <h2>Bookmarked Municipal Parcels</h2>
             <p className="subtitle">
-              Signed in as <strong className="mono">{user.email}</strong>
+              Authenticated analyst: <strong className="mono">{user.email}</strong>
             </p>
           </div>
           <button type="button" className="secondary-btn" onClick={onBackToMap}>
-            ← Back to Map Explorer
+            ← Return to 3D Spatial Map
           </button>
         </header>
 
         <div className="portfolio-stats-grid">
-          <div className="highlight-card">
+          <div className="highlight-card glass-surface">
             <span className="metric-label">Saved Properties</span>
             <strong className="score-number">{portfolio.length}</strong>
           </div>
-          <div className="highlight-card">
+          <div className="highlight-card glass-surface">
             <span className="metric-label">Avg Climate Risk</span>
             <strong className="score-number">{avgRisk} / 100</strong>
           </div>
-          <div className="highlight-card">
+          <div className="highlight-card glass-surface">
             <span className="metric-label">Total Base Circle Value</span>
             <strong className="valuation-number">
               {formatCurrency(totalBaseValue)}
             </strong>
           </div>
-          <div className="highlight-card">
+          <div className="highlight-card glass-surface">
             <span className="metric-label">Risk-Adjusted Portfolio</span>
             <strong className="valuation-number">
               {formatCurrency(totalAdjustedValue)}
@@ -106,7 +105,7 @@ export default function PortfolioView({
 
         {loading && (
           <div className="status-box loading-box">
-            Loading saved parcels from portfolio...
+            Syncing saved parcels from Supabase portfolio...
           </div>
         )}
 
@@ -117,14 +116,14 @@ export default function PortfolioView({
         )}
 
         {!loading && portfolio.length === 0 && (
-          <div className="portfolio-empty-card">
+          <div className="portfolio-empty-card glass-surface">
             <h3>No Properties Bookmarked Yet</h3>
             <p>
-              Select any parcel in the Map Explorer and click{" "}
+              Select any parcel on the 3D Map and click{" "}
               <strong>Bookmark Property</strong> to track it in your portfolio.
             </p>
             <button type="button" className="primary-btn" onClick={onBackToMap}>
-              Explore Parcels on Map
+              Explore Parcels on 3D Map
             </button>
           </div>
         )}
@@ -135,7 +134,10 @@ export default function PortfolioView({
               const riskScore = Number(item.risk_score ?? 0);
               const tier = getRiskTier(riskScore);
               return (
-                <article key={item.parcel_id} className="portfolio-item-card">
+                <article
+                  key={item.parcel_id}
+                  className={`portfolio-item-card glass-surface ${tier.cardClass}`}
+                >
                   <div className="panel-title-row">
                     <strong className="mono portfolio-parcel-id">
                       Parcel {item.parcel_id}
@@ -174,7 +176,7 @@ export default function PortfolioView({
                       className="secondary-btn"
                       onClick={() => onInspectParcel(item)}
                     >
-                      Fly to Parcel
+                      Fly to 3D Parcel
                     </button>
                     <button
                       type="button"
