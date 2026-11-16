@@ -5,6 +5,7 @@ const { Pool } = require("pg");
 
 const app = express();
 const port = Number.parseInt(process.env.PORT, 10) || 3000;
+const riskServiceUrl = process.env.RISK_SERVICE_URL || "http://localhost:8000";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -18,6 +19,30 @@ app.use(cors());
 app.use(express.json());
 
 const MAX_ZOOM = 22;
+let localPortfolioTableReady = false;
+
+/**
+ * Ensure fallback local portfolio table exists when Supabase auth schema is absent.
+ */
+async function ensureLocalPortfolioTable() {
+  if (localPortfolioTableReady) return;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS public.saved_portfolios_local (
+      id                      BIGSERIAL PRIMARY KEY,
+      user_id                 VARCHAR(128) NOT NULL,
+      parcel_id               VARCHAR(64) NOT NULL,
+      circle_rate             NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
+      risk_score              NUMERIC(5, 2) NOT NULL DEFAULT 0.00,
+      risk_adjusted_valuation NUMERIC(14, 2),
+      distance_to_hazard      NUMERIC(10, 2),
+      longitude               DOUBLE PRECISION,
+      latitude                DOUBLE PRECISION,
+      created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT uq_saved_portfolios_local_user_parcel UNIQUE (user_id, parcel_id)
+    );
+  `);
+  localPortfolioTableReady = true;
+}
 
 /**
  * Strictly parse a non-negative integer tile coordinate from a route parameter.
@@ -55,8 +80,8 @@ app.get("/health", async (_req, res) => {
  * Serve dynamic Mapbox Vector Tiles (MVT) from municipal_parcels.
  *
  * Uses ST_TileEnvelope (EPSG:3857) transformed to SRID 4326 so the bounding-box
- * predicate leverages the GiST spatial index (idx_municipal_parcels_geom),
- * then projects clipped parcel geometries into Web Mercator tile coordinates.
+ * predicate leverages the GiST spatial index, then projects clipped parcel
+ * geometries into Web Mercator tile coordinates.
  */
 app.get(["/api/tiles/:z/:x/:y.mvt", "/api/tiles/:z/:x/:y.pbf"], async (req, res, next) => {
   const z = parseTileCoord(req.params.z);
@@ -128,6 +153,70 @@ app.get(["/api/tiles/:z/:x/:y.mvt", "/api/tiles/:z/:x/:y.pbf"], async (req, res,
 });
 
 /**
+ * Fetch municipal parcels intersecting a WGS 84 bounding box as GeoJSON FeatureCollection.
+ */
+app.get("/api/parcels/bbox", async (req, res, next) => {
+  const minLon = Number.parseFloat(req.query.minLon);
+  const minLat = Number.parseFloat(req.query.minLat);
+  const maxLon = Number.parseFloat(req.query.maxLon);
+  const maxLat = Number.parseFloat(req.query.maxLat);
+  const requestedLimit = Number.parseInt(req.query.limit, 10);
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.max(1, Math.min(500, requestedLimit))
+    : 500;
+
+  if (
+    [minLon, minLat, maxLon, maxLat].some((val) => !Number.isFinite(val)) ||
+    minLon >= maxLon ||
+    minLat >= maxLat ||
+    minLon < -180 ||
+    maxLon > 180 ||
+    minLat < -90 ||
+    maxLat > 90
+  ) {
+    return res.status(400).json({
+      error: "Valid minLon, minLat, maxLon, maxLat bounding box coordinates are required.",
+    });
+  }
+
+  const bboxQuery = `
+    WITH env AS (
+      SELECT ST_MakeEnvelope($1::float8, $2::float8, $3::float8, $4::float8, 4326) AS bbox
+    )
+    SELECT
+      p.parcel_id,
+      p.circle_rate::float8 AS circle_rate,
+      p.risk_score::float8 AS risk_score,
+      ST_AsGeoJSON(p.geometry)::json AS geometry
+    FROM municipal_parcels AS p
+    CROSS JOIN env
+    WHERE p.geometry && env.bbox
+      AND ST_Intersects(p.geometry, env.bbox)
+    LIMIT $5;
+  `;
+
+  try {
+    const { rows } = await pool.query(bboxQuery, [minLon, minLat, maxLon, maxLat, limit]);
+    const features = rows.map((row) => ({
+      type: "Feature",
+      properties: {
+        parcel_id: row.parcel_id,
+        circle_rate: row.circle_rate,
+        risk_score: row.risk_score,
+      },
+      geometry: row.geometry,
+    }));
+
+    return res.json({
+      type: "FeatureCollection",
+      features,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+/**
  * Fetch parcel valuation & climate risk by WGS 84 (SRID 4326) coordinate.
  */
 app.get("/v1/parcels/lookup", async (req, res, next) => {
@@ -156,6 +245,161 @@ app.get("/v1/parcels/lookup", async (req, res, next) => {
       return res.status(404).json({ error: "No municipal parcel found at coordinates." });
     }
     return res.json(rows[0]);
+  } catch (err) {
+    return next(err);
+  }
+});
+
+/**
+ * Local portfolio fallback endpoints (used when Supabase cloud credentials are unset).
+ */
+app.get("/api/portfolios", async (req, res, next) => {
+  const userId = String(req.query.user_id || "").trim();
+  if (!userId) {
+    return res.status(400).json({ error: "Query parameter 'user_id' is required." });
+  }
+
+  try {
+    await ensureLocalPortfolioTable();
+    const { rows } = await pool.query(
+      `SELECT
+         id,
+         user_id,
+         parcel_id,
+         circle_rate::float8 AS circle_rate,
+         risk_score::float8 AS risk_score,
+         risk_adjusted_valuation::float8 AS risk_adjusted_valuation,
+         distance_to_hazard::float8 AS distance_to_hazard,
+         longitude,
+         latitude,
+         created_at
+       FROM public.saved_portfolios_local
+       WHERE user_id = $1
+       ORDER BY created_at DESC;`,
+      [userId]
+    );
+    return res.json({ items: rows });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+app.post("/api/portfolios", async (req, res, next) => {
+  const {
+    user_id: userId,
+    parcel_id: parcelId,
+    circle_rate: circleRate = 0,
+    risk_score: riskScore = 0,
+    risk_adjusted_valuation: riskAdjustedValuation = null,
+    distance_to_hazard: distanceToHazard = null,
+    longitude = null,
+    latitude = null,
+  } = req.body || {};
+
+  if (!userId || !parcelId) {
+    return res.status(400).json({ error: "'user_id' and 'parcel_id' are required." });
+  }
+
+  try {
+    await ensureLocalPortfolioTable();
+    const { rows } = await pool.query(
+      `INSERT INTO public.saved_portfolios_local (
+         user_id,
+         parcel_id,
+         circle_rate,
+         risk_score,
+         risk_adjusted_valuation,
+         distance_to_hazard,
+         longitude,
+         latitude
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (user_id, parcel_id)
+       DO UPDATE SET
+         circle_rate = EXCLUDED.circle_rate,
+         risk_score = EXCLUDED.risk_score,
+         risk_adjusted_valuation = EXCLUDED.risk_adjusted_valuation,
+         distance_to_hazard = EXCLUDED.distance_to_hazard,
+         longitude = COALESCE(EXCLUDED.longitude, public.saved_portfolios_local.longitude),
+         latitude = COALESCE(EXCLUDED.latitude, public.saved_portfolios_local.latitude)
+       RETURNING
+         id,
+         user_id,
+         parcel_id,
+         circle_rate::float8 AS circle_rate,
+         risk_score::float8 AS risk_score,
+         risk_adjusted_valuation::float8 AS risk_adjusted_valuation,
+         distance_to_hazard::float8 AS distance_to_hazard,
+         longitude,
+         latitude,
+         created_at;`,
+      [
+        String(userId),
+        String(parcelId),
+        Number(circleRate) || 0,
+        Number(riskScore) || 0,
+        riskAdjustedValuation !== null ? Number(riskAdjustedValuation) : null,
+        distanceToHazard !== null ? Number(distanceToHazard) : null,
+        longitude !== null ? Number(longitude) : null,
+        latitude !== null ? Number(latitude) : null,
+      ]
+    );
+    return res.status(201).json({ item: rows[0] });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+app.delete("/api/portfolios/:parcelId", async (req, res, next) => {
+  const userId = String(req.query.user_id || "").trim();
+  const parcelId = String(req.params.parcelId || "").trim();
+
+  if (!userId || !parcelId) {
+    return res.status(400).json({ error: "'user_id' query param and 'parcelId' are required." });
+  }
+
+  try {
+    await ensureLocalPortfolioTable();
+    const { rowCount } = await pool.query(
+      `DELETE FROM public.saved_portfolios_local
+       WHERE user_id = $1 AND parcel_id = $2;`,
+      [userId, parcelId]
+    );
+    return res.json({ deleted: rowCount > 0, parcel_id: parcelId });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+/**
+ * Proxy AI Valuation Chat queries to the Python FastAPI ML service.
+ */
+app.post("/api/chat/valuation", async (req, res, next) => {
+  const { message, parcel_context: parcelContext = null, history = [] } = req.body || {};
+
+  if (!message || typeof message !== "string" || !message.trim()) {
+    return res.status(400).json({ error: "Non-empty 'message' field is required." });
+  }
+
+  try {
+    const upstreamResponse = await fetch(`${riskServiceUrl}/chat/valuation`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: message.trim(),
+        parcel_context: parcelContext,
+        history,
+      }),
+    });
+
+    const data = await upstreamResponse.json().catch(() => ({}));
+    if (!upstreamResponse.ok) {
+      return res.status(upstreamResponse.status).json({
+        error: data.detail || "Upstream risk chat service error.",
+      });
+    }
+
+    return res.json(data);
   } catch (err) {
     return next(err);
   }
