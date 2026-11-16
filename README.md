@@ -186,10 +186,11 @@ Run the Vite development server on port `5173`:
 
 ```bash
 cd react-client
-cp .env.example .env   # Add VITE_MAPBOX_ACCESS_TOKEN
+cp .env.example .env   # Add map and Supabase credentials
 npm install
 npm run dev
 ```
 
+- **Photorealistic 3D mode**: Add `VITE_GOOGLE_MAPS_API_KEY` with the Google Maps JavaScript API and 3D Maps capability enabled to activate the Google 3D map experience. Without it, the app safely falls back to the Mapbox parcel map.
 - **Vector Tile Source**: Loads `http://localhost:3000/api/tiles/{z}/{x}/{y}.pbf` (`source-layer: municipal_parcels`) and renders parcel polygons with a `risk_score` color ramp.
 - **Interactive Valuation**: Clicking any parcel extracts `parcel_id`, `circle_rate`, and `distance_to_hazard` (or `distance`), posts to `http://localhost:8000/predict/risk`, and renders `risk_score` and `risk_adjusted_valuation` in both the sidebar and a Mapbox GL popup.

@@ -14,6 +14,7 @@ import {
 
 import AIChatWidget from "./components/AIChatWidget.jsx";
 import AuthModal from "./components/AuthModal.jsx";
+import Google3DMap from "./components/Google3DMap.jsx";
 import MapLayerControls from "./components/MapLayerControls.jsx";
 import PortfolioView from "./components/PortfolioView.jsx";
 import RegionSearchBar from "./components/RegionSearchBar.jsx";
@@ -29,6 +30,7 @@ import {
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN || "";
 const NODE_API_URL = import.meta.env.VITE_NODE_API_URL || "http://localhost:3000";
 const RISK_API_URL = import.meta.env.VITE_RISK_API_URL || "http://localhost:8000";
+const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "";
 
 const INITIAL_CENTER = [77.209, 28.6139];
 const INITIAL_ZOOM = 12;
@@ -165,6 +167,7 @@ export default function App() {
 
   // Map Layer & Region Search State
   const [baseStyle, setBaseStyle] = useState("dark");
+  const [mapFocus, setMapFocus] = useState(INITIAL_CENTER);
   const [showChoropleth, setShowChoropleth] = useState(true);
   const [choroplethOpacity, setChoroplethOpacity] = useState(0.55);
   const [bboxParcelCount, setBboxParcelCount] = useState(null);
@@ -412,6 +415,7 @@ export default function App() {
 
   // Initialize Mapbox GL JS map once
   useEffect(() => {
+    if (GOOGLE_MAPS_API_KEY) return;
     if (!mapContainerRef.current || mapRef.current) return;
 
     mapboxgl.accessToken = MAPBOX_TOKEN;
@@ -526,6 +530,7 @@ export default function App() {
     async (region) => {
       navigateView("map");
       setBboxError(null);
+      setMapFocus(region.center);
 
       const map = mapRef.current;
       const bbox =
@@ -1007,7 +1012,15 @@ export default function App() {
           mapboxTokenPresent={Boolean(MAPBOX_TOKEN)}
         />
 
-        <div ref={mapContainerRef} className="map-container" />
+        {GOOGLE_MAPS_API_KEY ? (
+          <Google3DMap
+            apiKey={GOOGLE_MAPS_API_KEY}
+            center={mapFocus}
+            zoom={12}
+          />
+        ) : (
+          <div ref={mapContainerRef} className="map-container" />
+        )}
       </main>
 
       {activeView === "portfolio" && (
