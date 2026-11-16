@@ -1,0 +1,34 @@
+# Environment & Secret Files (never commit real keys/passwords)
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+
+# Dependencies & Virtual Environments
+node_modules/
+**/node_modules/
+.venv/
+**/.venv/
+venv/
+**/venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# Build Outputs, Logs & Runtime State
+dist/
+**/dist/
+build/
+**/build/
+.logs/
+.pids/
+*.log
+**/*.log
+
+# OS & Local Archives
+.DS_Store
+**/.DS_Store
+*.zip

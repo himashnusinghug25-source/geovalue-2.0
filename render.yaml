@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: geovalue-python-risk-service
+    runtime: python
+    rootDir: python-risk-service
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: APP_ENV
+        value: production
+
+  - type: web
+    name: geovalue-node-api
+    runtime: node
+    rootDir: node-api
+    plan: free
+    buildCommand: npm install
+    startCommand: node src/index.js
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: RISK_SERVICE_URL
+        fromService:
+          type: web
+          name: geovalue-python-risk-service
+          envVarKey: RENDER_EXTERNAL_URL
